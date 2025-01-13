@@ -26,7 +26,7 @@
 </head>
 <body>
     <h1>WebRTC Demo</h1>
-    <div id="status">Status: Aguardando inÌcio...</div>
+    <div id="status">Status: Aguardando in√≠cio...</div>
     <div id="videoContainer">
         <video id="localVideo" autoplay playsinline muted></video>
         <video id="remoteVideo" autoplay playsinline></video>
@@ -34,29 +34,40 @@
     <button id="startButton">Iniciar Chamada</button>
 
     <script>
-        // ConfiguraÁ„o expandida do WebRTC com m˙ltiplos servidores STUN/TURN
+        // Configura√ß√£o expandida do WebRTC com m√∫ltiplos servidores STUN/TURN
         const configuration = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                { urls: 'stun:stun2.l.google.com:19302' },
-                { urls: 'stun:stun3.l.google.com:19302' },
-                { urls: 'stun:stun4.l.google.com:19302' },
-                {
-                    urls: 'turn:openrelay.metered.ca:80',
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
-                },
-                {
-                    urls: 'turn:openrelay.metered.ca:443',
-                    username: 'openrelayproject',
-                    credential: 'openrelayproject'
-                }
-            ],
-            iceCandidatePoolSize: 10,
-            bundlePolicy: 'max-bundle',
-            rtcpMuxPolicy: 'require'
-        };
+    iceServers: [
+        { 
+            urls: [
+                "stun:stun.relay.metered.ca:80",
+                "stun:stun1.l.google.com:19302",
+                "stun:stun2.l.google.com:19302"
+            ]
+        },
+        {
+            urls: "turn:a.relay.metered.ca:80",
+            username: "89b2d3125d64e4ed902f6188",
+            credential: "/3VrVxQxH6aMR/E/"
+        },
+        {
+            urls: "turn:a.relay.metered.ca:80?transport=tcp",
+            username: "89b2d3125d64e4ed902f6188",
+            credential: "/3VrVxQxH6aMR/E/"
+        },
+        {
+            urls: "turn:a.relay.metered.ca:443",
+            username: "89b2d3125d64e4ed902f6188",
+            credential: "/3VrVxQxH6aMR/E/"
+        },
+        {
+            urls: "turn:a.relay.metered.ca:443?transport=tcp",
+            username: "89b2d3125d64e4ed902f6188",
+            credential: "/3VrVxQxH6aMR/E/"
+        }
+    ],
+    iceCandidatePoolSize: 10,
+    iceTransportPolicy: 'all'
+};
 
         let localStream;
         let peerConnection;
@@ -70,39 +81,46 @@
             statusDiv.textContent = 'Status: ' + message;
         }
 
-        // Iniciar mÌdia local
+        // Iniciar m√≠dia local
         async function startLocalStream() {
-            updateStatus('Solicitando acesso ‡ c‚mera...');
+            updateStatus('Solicitando acesso √† c√¢mera...');
             
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ 
                     video: true, 
                     audio: true 
                 });
-                updateStatus('Acesso ‡ c‚mera concedido');
+                updateStatus('Acesso √† c√¢mera concedido');
                 localVideo.srcObject = localStream;
                 startButton.disabled = true;
                 createPeerConnection();
             } catch (error) {
-                updateStatus('Erro ao acessar c‚mera: ' + error.message);
+                updateStatus('Erro ao acessar c√¢mera: ' + error.message);
                 console.error('Erro completo:', error);
             }
         }
 
-        // Criar conex„o peer
+        // Criar conex√£o peer
         function createPeerConnection() {
-            updateStatus('Criando conex„o peer...');
-            
-            try {
-                peerConnection = new RTCPeerConnection(configuration);
-                
-                peerConnection.oniceconnectionstatechange = () => {
-                    updateStatus('Estado ICE: ' + peerConnection.iceConnectionState);
-                };
+            peerConnection.oniceconnectionstatechange = () => {
+    updateStatus(`Estado ICE: ${peerConnection.iceConnectionState}`);
+    
+    if (peerConnection.iceConnectionState === 'failed') {
+        console.log('Tentando reconex√£o...');
+        peerConnection.restartIce();
+    }
+};
 
-                peerConnection.onconnectionstatechange = () => {
-                    updateStatus('Estado da conex„o: ' + peerConnection.connectionState);
-                };
+peerConnection.onconnectionstatechange = () => {
+    updateStatus(`Estado da conex√£o: ${peerConnection.connectionState}`);
+    
+    if (peerConnection.connectionState === 'failed') {
+        startButton.disabled = false;
+        updateStatus('Conex√£o falhou. Tente iniciar novamente.');
+    } else if (peerConnection.connectionState === 'connected') {
+        updateStatus('Conectado! Chamada estabelecida.');
+    }
+};
                 
                 // Adicionar streams locais
                 localStream.getTracks().forEach(track => {
@@ -128,7 +146,7 @@
 
                 createOffer();
             } catch (error) {
-                updateStatus('Erro ao criar conex„o peer: ' + error.message);
+                updateStatus('Erro ao criar conex√£o peer: ' + error.message);
                 console.error('Erro completo:', error);
             }
         }
@@ -153,7 +171,7 @@
             }
         }
 
-        // Conex„o com Socket.IO
+        // Conex√£o com Socket.IO
         const socket = io({
             reconnectionDelayMax: 10000,
             reconnection: true
@@ -164,10 +182,10 @@
         });
 
         socket.on('connect_error', (error) => {
-            updateStatus('Erro na conex„o Socket.IO: ' + error.message);
+            updateStatus('Erro na conex√£o Socket.IO: ' + error.message);
         });
 
-        // Eventos do Socket.IO para sinalizaÁ„o
+        // Eventos do Socket.IO para sinaliza√ß√£o
         socket.on('signal', async data => {
             try {
                 updateStatus('Sinal recebido: ' + data.type);
@@ -197,7 +215,7 @@
             }
         });
 
-        // Adicionar evento ao bot„o
+        // Adicionar evento ao bot√£o
         startButton.addEventListener('click', startLocalStream);
     </script>
 </body>
