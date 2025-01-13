@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Demo</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        #videoContainer {
+            margin: 20px 0;
+        }
+        video {
+            width: 300px;
+            height: 225px;
+            border: 1px solid #ccc;
+            margin: 10px;
+            background: #f0f0f0;
+        }
+        #status {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ccc;
+            background: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebRTC Demo</h1>
+    <div id="status">Status: Aguardando início...</div>
+    <div id="videoContainer">
+        <video id="localVideo" autoplay playsinline muted></video>
+        <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+    <button id="startButton">Iniciar Chamada</button>
+
+    <script>
+        // Configuração expandida do WebRTC com múltiplos servidores STUN/TURN
+        const configuration = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' },
+                {
+                    urls: 'turn:openrelay.metered.ca:80',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                },
+                {
+                    urls: 'turn:openrelay.metered.ca:443',
+                    username: 'openrelayproject',
+                    credential: 'openrelayproject'
+                }
+            ],
+            iceCandidatePoolSize: 10,
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require'
+        };
+
+        let localStream;
+        let peerConnection;
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const startButton = document.getElementById('startButton');
+        const statusDiv = document.getElementById('status');
+
+        function updateStatus(message) {
+            console.log(message);
+            statusDiv.textContent = 'Status: ' + message;
+        }
+
+        // Iniciar mídia local
+        async function startLocalStream() {
+            updateStatus('Solicitando acesso à câmera...');
+            
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: true, 
+                    audio: true 
+                });
+                updateStatus('Acesso à câmera concedido');
+                localVideo.srcObject = localStream;
+                startButton.disabled = true;
+                createPeerConnection();
+            } catch (error) {
+                updateStatus('Erro ao acessar câmera: ' + error.message);
+                console.error('Erro completo:', error);
+            }
+        }
+
+        // Criar conexão peer
+        function createPeerConnection() {
+            updateStatus('Criando conexão peer...');
+            
+            try {
+                peerConnection = new RTCPeerConnection(configuration);
+                
+                peerConnection.oniceconnectionstatechange = () => {
+                    updateStatus('Estado ICE: ' + peerConnection.iceConnectionState);
+                };
+
+                peerConnection.onconnectionstatechange = () => {
+                    updateStatus('Estado da conexão: ' + peerConnection.connectionState);
+                };
+                
+                // Adicionar streams locais
+                localStream.getTracks().forEach(track => {
+                    peerConnection.addTrack(track, localStream);
+                });
+
+                // Lidar com streams remotos
+                peerConnection.ontrack = event => {
+                    updateStatus('Stream remoto recebido');
+                    remoteVideo.srcObject = event.streams[0];
+                };
+
+                // Lidar com candidatos ICE
+                peerConnection.onicecandidate = event => {
+                    if (event.candidate) {
+                        updateStatus('Candidato ICE encontrado');
+                        socket.emit('signal', { 
+                            type: 'ice-candidate', 
+                            candidate: event.candidate 
+                        });
+                    }
+                };
+
+                createOffer();
+            } catch (error) {
+                updateStatus('Erro ao criar conexão peer: ' + error.message);
+                console.error('Erro completo:', error);
+            }
+        }
+
+        // Criar oferta
+        async function createOffer() {
+            try {
+                updateStatus('Criando oferta...');
+                const offer = await peerConnection.createOffer({
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: true
+                });
+                await peerConnection.setLocalDescription(offer);
+                socket.emit('signal', { 
+                    type: 'offer', 
+                    offer: offer 
+                });
+                updateStatus('Oferta enviada');
+            } catch (error) {
+                updateStatus('Erro ao criar oferta: ' + error.message);
+                console.error('Erro completo:', error);
+            }
+        }
+
+        // Conexão com Socket.IO
+        const socket = io({
+            reconnectionDelayMax: 10000,
+            reconnection: true
+        });
+        
+        socket.on('connect', () => {
+            updateStatus('Conectado ao servidor Socket.IO');
+        });
+
+        socket.on('connect_error', (error) => {
+            updateStatus('Erro na conexão Socket.IO: ' + error.message);
+        });
+
+        // Eventos do Socket.IO para sinalização
+        socket.on('signal', async data => {
+            try {
+                updateStatus('Sinal recebido: ' + data.type);
+                if (data.type === 'offer') {
+                    if (!peerConnection) {
+                        createPeerConnection();
+                    }
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+                    const answer = await peerConnection.createAnswer();
+                    await peerConnection.setLocalDescription(answer);
+                    socket.emit('signal', { 
+                        type: 'answer', 
+                        answer: answer 
+                    });
+                } 
+                else if (data.type === 'answer') {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+                } 
+                else if (data.type === 'ice-candidate') {
+                    if (peerConnection.currentRemoteDescription) {
+                        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                    }
+                }
+            } catch (error) {
+                updateStatus('Erro ao processar sinal: ' + error.message);
+                console.error('Erro completo:', error);
+            }
+        });
+
+        // Adicionar evento ao botão
+        startButton.addEventListener('click', startLocalStream);
+    </script>
+</body>
+</html>
