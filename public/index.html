@@ -22,11 +22,20 @@
             border: 1px solid #ccc;
             background: #f9f9f9;
         }
+        #debugLog {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ccc;
+            background: #f0f0f0;
+            max-height: 200px;
+            overflow-y: auto;
+        }
     </style>
 </head>
 <body>
     <h1>WebRTC Demo</h1>
     <div id="status">Status: Aguardando início...</div>
+    <div id="debugLog"></div>
     <div id="videoContainer">
         <video id="localVideo" autoplay playsinline muted></video>
         <video id="remoteVideo" autoplay playsinline></video>
@@ -34,7 +43,6 @@
     <button id="startButton">Iniciar Chamada</button>
 
     <script>
-        // Configuração do WebRTC com servidores TURN forçados
         const configuration = {
             iceServers: [
                 {
@@ -48,59 +56,67 @@
                     credential: 'devpassword'
                 }
             ],
-            iceTransportPolicy: 'relay', // Força o uso de TURN
+            iceTransportPolicy: 'relay',
             iceCandidatePoolSize: 10
         };
 
         let localStream;
-        let peerConnection;
+        let peerConnection = null;
         const localVideo = document.getElementById('localVideo');
         const remoteVideo = document.getElementById('remoteVideo');
         const startButton = document.getElementById('startButton');
         const statusDiv = document.getElementById('status');
+        const debugLog = document.getElementById('debugLog');
+
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            console.log(`${timestamp}: ${message}`);
+            debugLog.innerHTML += `<div>${timestamp}: ${message}</div>`;
+            debugLog.scrollTop = debugLog.scrollHeight;
+        }
 
         function updateStatus(message) {
-            console.log(message);
+            log(message);
             statusDiv.textContent = 'Status: ' + message;
         }
 
-        // Função de debug para conexão WebRTC
         function addConnectionDebug(pc) {
             pc.onicegatheringstatechange = () => {
-                updateStatus(`Estado de coleta ICE: ${pc.iceGatheringState}`);
-                console.log('Estado de coleta ICE:', pc.iceGatheringState);
+                log(`Estado de coleta ICE: ${pc.iceGatheringState}`);
             };
             
             pc.onicecandidate = event => {
                 if (event.candidate) {
-                    console.log('Novo candidato:', event.candidate.candidate);
-                    updateStatus('Novo candidato ICE encontrado');
+                    log(`Novo candidato ICE: ${event.candidate.type}`);
                     socket.emit('signal', {
                         type: 'ice-candidate',
                         candidate: event.candidate
                     });
                 } else {
-                    console.log('Coleta de candidatos ICE finalizada');
-                    updateStatus('Coleta de candidatos ICE finalizada');
+                    log('Coleta de candidatos ICE finalizada');
                 }
+            };
+
+            pc.oniceconnectionstatechange = () => {
+                log(`Estado da conexão ICE: ${pc.iceConnectionState}`);
             };
             
             pc.onconnectionstatechange = () => {
-                console.log('Estado da conexão:', pc.connectionState);
-                updateStatus(`Estado da conexão: ${pc.connectionState}`);
+                log(`Estado da conexão: ${pc.connectionState}`);
                 
                 if (pc.connectionState === 'connected') {
-                    console.log('Conexão estabelecida com sucesso!');
                     updateStatus('Conexão estabelecida com sucesso!');
                 } else if (pc.connectionState === 'failed') {
-                    console.log('Conexão falhou. Tentando reconectar...');
                     updateStatus('Conexão falhou. Tentando reconectar...');
                     startButton.disabled = false;
                 }
             };
+
+            pc.onsignalingstatechange = () => {
+                log(`Estado de sinalização: ${pc.signalingState}`);
+            };
         }
 
-        // Iniciar mídia local
         async function startLocalStream() {
             updateStatus('Solicitando acesso à câmera...');
             
@@ -112,58 +128,64 @@
                 updateStatus('Acesso à câmera concedido');
                 localVideo.srcObject = localStream;
                 startButton.disabled = true;
-                createPeerConnection();
+                await initializePeerConnection();
             } catch (error) {
                 updateStatus('Erro ao acessar câmera: ' + error.message);
-                console.error('Erro completo:', error);
+                log('Erro ao acessar câmera: ' + error.toString());
             }
         }
 
-        // Criar conexão peer
-        function createPeerConnection() {
+        async function initializePeerConnection() {
             try {
+                if (peerConnection) {
+                    log('Fechando conexão peer anterior');
+                    peerConnection.close();
+                }
+
+                log('Criando nova conexão peer');
                 peerConnection = new RTCPeerConnection(configuration);
                 addConnectionDebug(peerConnection);
                 
                 localStream.getTracks().forEach(track => {
-                    console.log('Adicionando track:', track.kind);
+                    log(`Adicionando track: ${track.kind}`);
                     peerConnection.addTrack(track, localStream);
                 });
 
                 peerConnection.ontrack = event => {
-                    console.log('Track remoto recebido:', event.track.kind);
-                    updateStatus(`Track remoto recebido: ${event.track.kind}`);
-                    remoteVideo.srcObject = event.streams[0];
+                    log(`Track remoto recebido: ${event.track.kind}`);
+                    if (!remoteVideo.srcObject) {
+                        remoteVideo.srcObject = new MediaStream();
+                    }
+                    remoteVideo.srcObject.addTrack(event.track);
                 };
 
-                createOffer();
+                await createOffer();
             } catch (error) {
-                console.error('Erro ao criar conexão:', error);
+                log('Erro ao inicializar conexão peer: ' + error.toString());
                 updateStatus('Erro ao criar conexão: ' + error.message);
             }
         }
 
-        // Criar oferta
         async function createOffer() {
             try {
-                updateStatus('Criando oferta...');
+                log('Criando oferta...');
                 const offer = await peerConnection.createOffer({
                     offerToReceiveAudio: true,
                     offerToReceiveVideo: true
                 });
+                log('Oferta criada, definindo descrição local');
                 await peerConnection.setLocalDescription(offer);
                 socket.emit('signal', { 
                     type: 'offer', 
                     offer: offer 
                 });
-                updateStatus('Oferta enviada');
+                log('Oferta enviada');
             } catch (error) {
+                log('Erro ao criar oferta: ' + error.toString());
                 updateStatus('Erro ao criar oferta: ' + error.message);
-                console.error('Erro completo:', error);
             }
         }
 
-        // Conexão com Socket.IO
         const socket = io({
             reconnectionDelayMax: 10000,
             reconnection: true
@@ -174,25 +196,24 @@
         });
 
         socket.on('connect_error', (error) => {
+            log('Erro Socket.IO: ' + error.toString());
             updateStatus('Erro na conexão Socket.IO: ' + error.message);
         });
 
-        // Eventos do Socket.IO para sinalização
         socket.on('signal', async data => {
             try {
-                console.log('Sinal recebido:', data.type);
-                updateStatus('Sinal recebido: ' + data.type);
+                log(`Sinal recebido: ${data.type}`);
                 
                 if (data.type === 'offer') {
                     if (!peerConnection) {
-                        console.log('Criando peer connection para responder oferta');
-                        createPeerConnection();
+                        log('Inicializando peer connection para responder oferta');
+                        await initializePeerConnection();
                     }
-                    console.log('Definindo descrição remota (oferta)');
+                    log('Definindo descrição remota (oferta)');
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-                    console.log('Criando resposta');
+                    log('Criando resposta');
                     const answer = await peerConnection.createAnswer();
-                    console.log('Definindo descrição local (resposta)');
+                    log('Definindo descrição local (resposta)');
                     await peerConnection.setLocalDescription(answer);
                     socket.emit('signal', {
                         type: 'answer',
@@ -200,25 +221,28 @@
                     });
                 }
                 else if (data.type === 'answer') {
-                    console.log('Definindo descrição remota (resposta)');
+                    log('Definindo descrição remota (resposta)');
                     await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
                 }
                 else if (data.type === 'ice-candidate') {
-                    console.log('Adicionando candidato ICE');
-                    try {
-                        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-                        console.log('Candidato ICE adicionado com sucesso');
-                    } catch (e) {
-                        console.error('Erro ao adicionar candidato:', e);
+                    if (peerConnection) {
+                        log('Adicionando candidato ICE');
+                        try {
+                            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                            log('Candidato ICE adicionado com sucesso');
+                        } catch (e) {
+                            log('Erro ao adicionar candidato: ' + e.toString());
+                        }
+                    } else {
+                        log('Ignorando candidato ICE - sem conexão peer');
                     }
                 }
             } catch (error) {
-                console.error('Erro ao processar sinal:', error);
+                log('Erro ao processar sinal: ' + error.toString());
                 updateStatus('Erro ao processar sinal: ' + error.message);
             }
         });
 
-        // Adicionar evento ao botão
         startButton.addEventListener('click', startLocalStream);
     </script>
 </body>
