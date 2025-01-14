@@ -44,22 +44,26 @@
 
     <script>
         const configuration = {
-            iceServers: [
-                {
-                    urls: 'turn:turn.webrtc.live:443',
-                    username: 'devuser',
-                    credential: 'devpassword'
-                },
-                {
-                    urls: 'turn:turn.webrtc.live:443?transport=tcp',
-                    username: 'devuser',
-                    credential: 'devpassword'
-                }
+    iceServers: [
+        {
+            urls: [
+                'stun:stun.l.google.com:19302',
+                'stun:stun1.l.google.com:19302'
+            ]
+        },
+        {
+            urls: [
+                'turn:numb.viagenie.ca:3478'
             ],
-            iceTransportPolicy: 'relay',
-            iceCandidatePoolSize: 10
-        };
-
+            username: 'webrtc@live.com',
+            credential: 'muazkh'
+        }
+    ],
+    iceTransportPolicy: 'all',
+    iceCandidatePoolSize: 10,
+    bundlePolicy: 'max-bundle',
+    rtcpMuxPolicy: 'require'
+};
         let localStream;
         let peerConnection = null;
         const localVideo = document.getElementById('localVideo');
@@ -143,22 +147,30 @@
                 }
 
                 log('Criando nova conexão peer');
-                peerConnection = new RTCPeerConnection(configuration);
-                addConnectionDebug(peerConnection);
-                
-                localStream.getTracks().forEach(track => {
-                    log(`Adicionando track: ${track.kind}`);
-                    peerConnection.addTrack(track, localStream);
-                });
+              peerConnection.oniceconnectionstatechange = () => {
+    log(`Estado da conexão ICE alterado para: ${peerConnection.iceConnectionState}`);
+    if (peerConnection.iceConnectionState === 'failed') {
+        log('Conexão ICE falhou, reiniciando...');
+        peerConnection.restartIce();
+    }
+};
 
-                peerConnection.ontrack = event => {
-                    log(`Track remoto recebido: ${event.track.kind}`);
-                    if (!remoteVideo.srcObject) {
-                        remoteVideo.srcObject = new MediaStream();
-                    }
-                    remoteVideo.srcObject.addTrack(event.track);
-                };
+               peerConnection.ontrack = event => {
+    log(`Track remoto recebido: ${event.track.kind}`);
+    remoteVideo.srcObject = event.streams[0];
+    
+    event.track.onunmute = () => {
+        log(`Track ${event.track.kind} unmuted`);
+        if (!remoteVideo.srcObject) {
+            remoteVideo.srcObject = event.streams[0];
+        }
+    };
 
+    event.streams[0].onaddtrack = () => {
+        log('Nova track adicionada ao stream remoto');
+        remoteVideo.srcObject = event.streams[0];
+    };
+};
                 await createOffer();
             } catch (error) {
                 log('Erro ao inicializar conexão peer: ' + error.toString());
